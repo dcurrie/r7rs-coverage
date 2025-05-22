@@ -1,8 +1,32 @@
 #!/bin/bash
-
+set -uo pipefail
 GUILE=${GUILE:-guile}
+GXI=${GXI:-gxi}
+CPU_LIMIT=${CPU_LIMIT:-"5"}
+HUSKI=${HUSKI:-huski}
+HUSKC=${HUSKC:-huskc}
 
 case "$1" in
+    husk) SCHEME_EXE=husk_exec
+          SCHEME_NAME=husk
+          SCHEME_VERSION=$($HUSKC --version | grep Version | cut -d\  -f 3)
+          ;;
+    owllisp) SCHEME_EXE=owllisp_exec
+             SCHEME_NAME=owllisp
+             SCHEME_VERSION=$(ol --version | cut -d\  -f 3)
+             ;;
+    oaklisp) SCHEME_EXE=oaklisp_exec
+             SCHEME_NAME=oaklisp
+             SCHEME_VERSION=$(oaklisp --version | cut -d\  -f 2)
+             ;;
+    gerbil) SCHEME_EXE=gerbil_exec
+         SCHEME_NAME=gerbil
+         SCHEME_VERSION=$(${GXI} --lang r7rs -e '(import (gerbil/core)) (display (gerbil-system-version-string))' | cut -d\  -f 2)
+         ;;
+    loko) SCHEME_NAME=loko
+          SCHEME_EXE=loko_exec
+          SCHEME_VERSION=$(echo | loko | grep -e '^Loko Scheme ' | sed 's/Loko Scheme //')
+          ;;
     mit) SCHEME_EXE=mit_scheme_exec
          SCHEME_NAME=mit
          SCHEME_VERSION=$(mit-scheme --version | grep Release | cut -f 4 -d\  )
@@ -15,26 +39,26 @@ case "$1" in
            SCHEME_NAME=chibi
            SCHEME_VERSION=$(chibi-scheme  -V | cut -f 2 -d\  )
            ;;
+    chez) SCHEME_EXE=chez_exec
+           SCHEME_NAME=chez
+           SCHEME_VERSION=$(chez --version 2>&1)
+           ;;
     chicken) SCHEME_EXE=csi_exec
              SCHEME_NAME=chicken
-             SCHEME_VERSION=$(csi -version | grep Version | cut -f 2 -d\   )
+             SCHEME_VERSION=$(csi -version | cut -f 1 -d - )
              ;;
     larceny) SCHEME_EXE=larceny_exec
              SCHEME_NAME=larceny
              SCHEME_VERSION=$(larceny --version | cut -f 2 -d\  )
              ;;
-    mosh) SCHEME_EXE=mosh_exec
-          SCHEME_NAME=mosh
-          SCHEME_VERSION=$(mosh-scheme -v | cut -f 6 -d\  )
+    kawa) SCHEME_EXE=kawa_exec
+          SCHEME_NAME=kawa
+          SCHEME_VERSION=$(kawa  --version | head -n 1 | cut -d\  -f 2)
           ;;
     picrin) SCHEME_EXE=picrin_exec
             SCHEME_NAME=picrin
-            SCHEME_VERSION="unknown"
+            SCHEME_VERSION="0.1"
             ;;
-    gambitc) SCHEME_EXE=gambitc_exec
-             SCHEME_NAME=gambitc
-             SCHEME_VERSION="unknown"
-             ;;
     gauche) SCHEME_EXE=gauche_exec
             SCHEME_NAME=gauche
             SCHEME_VERSION=$(gosh -V | cut -f 5 -d\  )
@@ -44,10 +68,25 @@ case "$1" in
             SCHEME_VERSION=$(racket --version | cut -f 4 -d\ | sed 's/\.$//')
             ;;
     cyclone) SCHEME_EXE=cyclone_exec
-            SCHEME_NAME=cyclone
-            SCHEME_VERSION=$(cyclone -v | grep Version | sed 's/.*Version \([^ ][^ ]*\).*/\1/')
+             SCHEME_NAME=cyclone
+             SCHEME_VERSION=$(cyclone -v | grep Version | sed 's/.*Version \([^ ][^ ]*\).*/\1/')
+             ;;
+    foment) SCHEME_EXE=foment_exec
+            SCHEME_NAME=foment
+            SCHEME_VERSION=$(foment --version | cut -f 2 -d-)
             ;;
-
+    tinyscheme) SCHEME_EXE=tinyscheme_exec
+            SCHEME_NAME=tinyscheme
+            SCHEME_VERSION=1.42
+            ;;
+    sagittarius) SCHEME_EXE=sagittarius_exec
+                 SCHEME_NAME=sagittarius
+                 SCHEME_VERSION=$(sagittarius -v | cut -f 5 -d\ )
+                 ;;
+    stklos) SCHEME_EXE=stklos_exec
+            SCHEME_NAME=stklos
+            SCHEME_VERSION=$(stklos --version | grep stklos | cut -f 2 -d\ )
+            ;;
     *) echo "Unknown Scheme"
        exit -1
        ;;
@@ -55,39 +94,59 @@ esac
 
 
 racket_exec() {
-    racket $1
+    timeout ${CPU_LIMIT} racket $1
+    status=$?
+}
+
+loko_exec() {
+    timeout ${CPU_LIMIT} loko -std=r7rs --program $1
     status=$?
 }
 
 cyclone_exec() {
-    cyclone $1
+    timeout ${CPU_LIMIT} cyclone $1
     status=$?
 }
 
 gauche_exec() {
-    gosh -r7 -b $1
+    timeout ${CPU_LIMIT} gosh -r7 -b $1
     status=$?
-}
-
-gambitc_exec() {
-    exe=$(mktemp)
-    ( gambitc -o $exe -exe $1 && $exe ) >> gambitc.log 2>&1
-    status=$?
-    rm $exe
 }
 
 picrin_exec() {
-    picrin $1
+    timeout ${CPU_LIMIT} picrin $1
     status=$?
 }
 
-mosh_exec() {
-    mosh-scheme $1
+gerbil_exec() {
+    timeout -k ${CPU_LIMIT} ${CPU_LIMIT} ${GXI} --lang r7rs $1
     status=$?
+}
+
+husk_exec() {
+    timeout ${CPU_LIMIT} ${HUSKI} $1
+    status=$?
+}
+
+owllisp_exec() {
+    # TODO: something make owllisp hang when run from timeout, cannot quite reproduce it from the shell, run without timeout for now...
+    ol --no-readline $1
+    status=$?
+}
+oaklisp_exec() {
+    mv $1 $1.oak
+    oaklisp -- --load $1.oak --exit > /tmp/oaklisp.log 2>&1
+    cat /tmp/oaklisp.log
+    if grep 'An error occurred while processing' /tmp/oaklisp.log
+    then
+        status=1
+    else
+        status=0
+    fi
 }
 
 larceny_exec() {
-    larceny -r7rs -program $1 < /dev/null > /tmp/larceny.log 2>&1
+    timeout ${CPU_LIMIT} larceny -r7rs -program $1 < /dev/null > /tmp/larceny.log 2>&1
     if grep 'Error: ' /tmp/larceny.log
     then
         status=1
@@ -96,8 +155,13 @@ larceny_exec() {
     fi
 }
 
+kawa_exec() {
+    timeout ${CPU_LIMIT} kawa $1 < /dev/null 2>&1
+    status=$?
+}
+
 csi_exec() {
-    csi < $1 > /tmp/csi.log 2>&1
+    timeout ${CPU_LIMIT} csi < $1 > /tmp/csi.log 2>&1
     if grep 'Error: ' /tmp/csi.log
     then
         status=1
@@ -107,17 +171,17 @@ csi_exec() {
 }
 
 mit_scheme_exec() {
-    mit-scheme < $1
+    timeout ${CPU_LIMIT} mit-scheme < $1
     status=$?
 }
 
 guile_exec() {
-    ${GUILE} $1 > /tmp/guile.log 2>&1
+    timeout ${CPU_LIMIT} ${GUILE} --r7rs $1
     status=$?
 }
 
 chibi_exec() {
-    chibi-scheme < $1 > /tmp/chibi.log 2>&1
+    timeout ${CPU_LIMIT} chibi-scheme < $1 > /tmp/chibi.log 2>&1
     if grep 'ERROR' /tmp/chibi.log
     then
         status=1
@@ -125,52 +189,96 @@ chibi_exec() {
         status=0
     fi
 }
+
+
+foment_exec() {
+    timeout ${CPU_LIMIT} foment $1
+    status=$?
+}
+
+tinyscheme_exec() {
+    timeout ${CPU_LIMIT} tinyscheme -1 $1
+    status=$?
+}
+
+sagittarius_exec() {
+    timeout ${CPU_LIMIT} sagittarius -r7 -d -n $1
+    status=$?
+}
+
+stklos_exec() {
+    timeout ${CPU_LIMIT} stklos -f $1
+    status=$?
+}
+
+chez_exec() {
+    timeout ${CPU_LIMIT} chez --libdirs ~/scheme/chez < $1 > /tmp/chez.log 2>&1
+    if grep 'ERROR' /tmp/chez.log
+    then
+        status=1
+    else
+        if grep 'Exception' /tmp/chez.log
+        then
+            status=1
+        else
+            status=0
+        fi
+    fi
+}
+
 temp_dir=$(mktemp -d)
-for dir in input/*
+
+for pkg in input/*.scm
 do
-    #echo running group $dir
-    for i in $dir/*.scm
+    echo "***** running package $pkg"
+    csplit --quiet -f ${temp_dir}/cov -b '%03d.scm' $pkg '/;; TEST/' '{*}'
+    p=$(basename $pkg .scm)
+    package="("${p%%-*}" "${p#*-}")"
+    if [ "$package" = "(scheme base)" ] ;
+    then
+        pkg=$package
+    else
+        pkg="(scheme base) $package"
+    fi
+    echo "(import $pkg)"
+    for file in ${temp_dir}/cov*.scm
     do
-        #echo running file $i
-        csplit --quiet -f ${temp_dir}/cov -b '%02d.scm' $i '/;; TEST/' '{*}'
-        for file in ${temp_dir}/*
-        do
-            if [ -s $file ]
-            then
-                {
-                    tmpfile=$(mktemp)
-                    test=$(grep ';; TEST' $file | cut -f 3 -d\  )
-                    params=$(grep ';; TEST' $file | cut -f 4- -d\  )
-                    d=$(echo $dir | sed 's|input/||')
-                    TEST_GROUP=$(echo $i | sed -e 's|input/||' -e 's/.scm//')
-                    if [ -r preludes/$d/$SCHEME_NAME.scm ]
-                    then
-                        cat preludes/$d/$SCHEME_NAME.scm > $tmpfile
-                    fi
-                    if [ -r preludes/$SCHEME_NAME.scm ]
-                    then
-                        cat preludes/$SCHEME_NAME.scm >> $tmpfile
-                    fi
-                    cat $file >> $tmpfile
-                    $SCHEME_EXE $tmpfile
-                    rm $tmpfile
-                } >> $SCHEME_NAME.log 2>&1
-                if [ $status == 0 ]; then
-                    # don't do anything
-                    {
-                        echo "$SCHEME_NAME,$SCHEME_VERSION,$TEST_GROUP,OK,$test,$params"
-                    } | tee -a errors.csv
-                else
-                    {
-                        echo "$SCHEME_NAME,$SCHEME_VERSION,$TEST_GROUP,ERROR,$test,$params"
-                    } | tee -a errors.csv
+        if [ -s $file ]
+        then
+            {
+                tmpfile=$(mktemp)
+                test=$(grep ';; TEST' $file | cut -f 3 -d\  )
+                params=$(grep ';; TEST' $file | cut -f 4- -d\  )
+                echo "--------------------------------------------------"
+                echo "$pkg" "$test" "$params"
+                if [ -r preludes/$SCHEME_NAME.scm ]
+                then
+                    cat preludes/$SCHEME_NAME.scm >> $tmpfile
                 fi
+                echo "(import $pkg)" >> $tmpfile
+                echo "(define (assert x) (unless x (error \"ERROR assertion failed\")))" >> $tmpfile
+                if [ -r postludes/$SCHEME_NAME.scm ]
+                then
+                    cat postludes/$SCHEME_NAME.scm >> $tmpfile
+                fi
+                cat $file >> $tmpfile
+                $SCHEME_EXE $tmpfile
+                rm $tmpfile
+                echo " -> $status"
+            } >> $SCHEME_NAME.log 2>&1
+            if [ $status == 0 ]; then
+                state=OK
+            else
+                state=ERROR
             fi
-        done
-        rm $temp_dir/*.scm
+            echo "$SCHEME_NAME,$SCHEME_VERSION,$package,$state,$test,$params" | tee -a errors.csv
+        fi
     done
+    rm $temp_dir/*.scm
 done
-rm -Rf $temp_dir
+
+#rm -Rf $temp_dir
+
 # Local Variables:
 # mode: sh
 # End:
